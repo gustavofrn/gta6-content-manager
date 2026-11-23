@@ -1,0 +1,345 @@
+// Prisma schema - GTA 6 AI Content Manager
+// Fase 1: SQLite em desenvolvimento. Para produção, troque provider para "postgresql"
+// e atualize DATABASE_URL no .env
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== AUTENTICAÇÃO E PERMISSÕES ====================
+
+model Role {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  users     User[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  roleId       String
+  role         Role      @relation(fields: [roleId], references: [id])
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ideas      ContentIdea[]
+  drafts     ContentDraft[]
+  approvals  Approval[]
+  auditLogs  AuditLog[]
+  notifications Notification[]
+  socialAccounts SocialAccount[]
+}
+
+// ==================== REDES SOCIAIS ====================
+
+model SocialAccount {
+  id         String   @id @default(cuid())
+  platform   String
+  handle     String
+  name       String
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  connected  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  connections SocialConnection[]
+  scheduledPosts ScheduledPost[]
+}
+
+model SocialConnection {
+  id             String    @id @default(cuid())
+  socialAccountId String
+  socialAccount  SocialAccount @relation(fields: [socialAccountId], references: [id])
+  provider       String
+  accessToken    String?
+  refreshToken   String?
+  expiresAt      DateTime?
+  connectedAt    DateTime  @default(now())
+}
+
+// ==================== FONTES E FATOS ====================
+
+model ContentSource {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // official, creator, discovery
+  url         String?
+  platform    String?
+  reliability Int      @default(0) // 0-100
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  facts       VerifiedFact[]
+}
+
+model VerifiedFact {
+  id              String   @id @default(cuid())
+  title           String
+  content         String
+  sourceId        String
+  source          ContentSource @relation(fields: [sourceId], references: [id])
+  url             String?
+  publishedAt     DateTime?
+  verifiedAt      DateTime @default(now())
+  reliability     Int      @default(0)
+  approvalStatus  String   @default("pending") // pending, approved, rejected
+  createdAt       DateTime @default(now())
+  drafts          ContentDraft[]
+}
+
+// ==================== CRIADORES E MÍDIA ====================
+
+model Creator {
+  id          String   @id @default(cuid())
+  name        String
+  platform    String
+  handle      String
+  url         String?
+  canReuse    Boolean  @default(false)
+  permissionNotes String?
+  createdAt   DateTime @default(now())
+  mediaAssets MediaAsset[]
+  permissions MediaPermission[]
+}
+
+model MediaAsset {
+  id          String   @id @default(cuid())
+  creatorId   String?
+  creator     Creator? @relation(fields: [creatorId], references: [id])
+  type        String   // video, image, audio
+  url         String
+  storageKey  String?
+  durationSec Int?
+  width       Int?
+  height      Int?
+  createdAt   DateTime @default(now())
+  permissions MediaPermission[]
+  drafts      ContentDraft[]
+  clips       MediaClip[]
+}
+
+model MediaClip {
+  id               String   @id @default(cuid())
+  mediaAssetId     String
+  mediaAsset       MediaAsset @relation(fields: [mediaAssetId], references: [id])
+  title            String
+  startSec         Int      @default(0)
+  endSec           Int
+  caption          String?
+  status           String   @default("planned") // planned, exporting, exported, failed
+  outputStorageKey String?
+  outputUrl        String?
+  errorMessage     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model MediaPermission {
+  id           String     @id @default(cuid())
+  mediaAssetId String
+  mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id])
+  creatorId    String?
+  creator      Creator?   @relation(fields: [creatorId], references: [id])
+  granted      Boolean    @default(false)
+  license      String?
+  restrictions String?
+  grantedAt    DateTime?
+  expiresAt    DateTime?
+}
+
+// ==================== CONTEÚDO ====================
+
+model ContentIdea {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  pillar      String   // news, tips, gameplay, nostalgia, spotlight, countdown, question
+  status      String   @default("idea") // idea, drafted, scheduled, published
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+  draft       ContentDraft?
+}
+
+model ContentDraft {
+  id              String            @id @default(cuid())
+  title           String
+  caption         String?
+  pillar          String
+  hook            String?
+  ideaId          String?           @unique
+  idea            ContentIdea?      @relation(fields: [ideaId], references: [id])
+  factId          String?
+  fact            VerifiedFact?     @relation(fields: [factId], references: [id])
+  mediaAssetId    String?
+  mediaAsset      MediaAsset?       @relation(fields: [mediaAssetId], references: [id])
+  userId          String
+  user            User              @relation(fields: [userId], references: [id])
+  status          String            @default("draft") // draft, pending_approval, approved, rejected, scheduled, published
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  revisions       ContentRevision[]
+  approvals       Approval[]
+  scheduledPost   ScheduledPost?
+}
+
+model ContentRevision {
+  id        String   @id @default(cuid())
+  draftId   String
+  draft     ContentDraft @relation(fields: [draftId], references: [id])
+  title     String
+  caption   String?
+  changes   String?
+  createdAt DateTime @default(now())
+}
+
+model Approval {
+  id        String   @id @default(cuid())
+  draftId   String
+  draft     ContentDraft @relation(fields: [draftId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  decision  String   // approved, rejected, change_requested
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+// ==================== PUBLICAÇÃO ====================
+
+model ScheduledPost {
+  id               String              @id @default(cuid())
+  draftId          String              @unique
+  draft            ContentDraft        @relation(fields: [draftId], references: [id])
+  socialAccountId  String
+  socialAccount    SocialAccount       @relation(fields: [socialAccountId], references: [id])
+  scheduledAt      DateTime
+  timezone         String
+  status           String              @default("scheduled") // scheduled, publishing, published, failed, cancelled
+  createdAt        DateTime            @default(now())
+  publishedPost    PublishedPost?
+  attempts         PublicationAttempt[]
+}
+
+model PublishedPost {
+  id               String   @id @default(cuid())
+  scheduledPostId  String   @unique
+  scheduledPost    ScheduledPost @relation(fields: [scheduledPostId], references: [id])
+  platformPostId   String?
+  url              String?
+  publishedAt      DateTime @default(now())
+  engagements      EngagementRecord[]
+  metrics          MetricSnapshot[]
+}
+
+model PublicationAttempt {
+  id              String   @id @default(cuid())
+  scheduledPostId String
+  scheduledPost   ScheduledPost @relation(fields: [scheduledPostId], references: [id])
+  status          String   // success, failed
+  errorMessage    String?
+  attemptedAt     DateTime @default(now())
+}
+
+// ==================== MÉTRICAS E ENGAJAMENTO ====================
+
+model EngagementRecord {
+  id              String   @id @default(cuid())
+  publishedPostId String
+  publishedPost   PublishedPost @relation(fields: [publishedPostId], references: [id])
+  likes           Int      @default(0)
+  comments        Int      @default(0)
+  shares          Int      @default(0)
+  saves           Int      @default(0)
+  views           Int      @default(0)
+  recordedAt      DateTime @default(now())
+}
+
+model MetricSnapshot {
+  id              String   @id @default(cuid())
+  publishedPostId String
+  publishedPost   PublishedPost @relation(fields: [publishedPostId], references: [id])
+  views12h        Int?
+  views24h        Int?
+  views72h        Int?
+  followersAtRead Int?
+  experimentId    String?
+  experiment      Experiment? @relation(fields: [experimentId], references: [id])
+  notes           String?
+  recordedAt      DateTime @default(now())
+}
+
+// ==================== EXPERIMENTOS E APRENDIZADO ====================
+
+model Experiment {
+  id            String           @id @default(cuid())
+  name          String
+  variable      String // hook, duration, time, caption_style, video_type
+  hypothesis    String?
+  status        String           @default("running") // running, completed, cancelled
+  startedAt     DateTime         @default(now())
+  endedAt       DateTime?
+  metrics       MetricSnapshot[]
+  learning      LearningRecord?
+}
+
+model LearningRecord {
+  id           String    @id @default(cuid())
+  experimentId String?   @unique
+  experiment   Experiment? @relation(fields: [experimentId], references: [id])
+  type         String    // win, loss, rule, change
+  title        String
+  description  String
+  createdAt    DateTime  @default(now())
+}
+
+// ==================== SISTEMA ====================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String?
+  entityId  String?
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+model AutomationJob {
+  id            String   @id @default(cuid())
+  name          String
+  type          String // source_check, news_detection, draft_creation, metrics_collection, etc.
+  enabled       Boolean  @default(false)
+  schedule      String?  // cron expression
+  lastRunAt     DateTime?
+  nextRunAt     DateTime?
+  lastStatus    String?  // success, failed
+  lastError     String?
+  createdAt     DateTime @default(now())
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String?
+  updatedAt DateTime @updatedAt
+}
